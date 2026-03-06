@@ -1,4 +1,4 @@
-"""mdify CLI — PDF → Markdown converter powered by local Ollama vision models."""
+"""mdify CLI — file → Markdown converter powered by local Ollama vision models."""
 
 from __future__ import annotations
 
@@ -9,22 +9,28 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 from rich.console import Console
-from rich.progress import (
-    BarColumn,
-    MofNCompleteColumn,
-    Progress,
-    SpinnerColumn,
-    TextColumn,
-    TimeElapsedColumn,
-    TimeRemainingColumn,
-)
+from tqdm import tqdm
 
-from mdify.converter import convert_pdf
+from mdify.converter import convert_file, SUPPORTED_EXTENSIONS
 from mdify.ollama import ensure_ollama, pull_model
 
 console = Console(stderr=True)
 
-DEFAULT_MODEL = "qwen2.5vl:3b"
+
+class PgMinBar(tqdm):
+    """tqdm subclass that displays rate in pg/min instead of it/s."""
+
+    @property
+    def format_dict(self):
+        d = super().format_dict
+        rate = d.get("rate")
+        if rate and rate > 0:
+            d["rate_fmt"] = f"{rate * 60:.1f} files/min"
+        else:
+            d["rate_fmt"] = "? files/min"
+        return d
+
+DEFAULT_MODEL = "qwen3.5:4b"
 DEFAULT_DPI = 200
 DEFAULT_WORKERS = 1
 DEFAULT_OLLAMA_URL = "http://localhost:11434/v1/chat/completions"
@@ -33,17 +39,19 @@ DEFAULT_OLLAMA_URL = "http://localhost:11434/v1/chat/completions"
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="mdify",
-        description="Convert PDF files to Markdown using local Ollama vision models.",
+        description="Convert files to Markdown using local Ollama vision models.",
         epilog="Examples:\n"
         "  mdify document.pdf\n"
-        "  mdify ./papers/ -o ./markdown/\n"
-        "  mdify report.pdf --model qwen2.5vl:7b --dpi 300\n",
+        "  mdify presentation.pptx\n"
+        "  mdify photo.jpg -o ./markdown/\n"
+        "  mdify ./documents/ -o ./markdown/\n"
+        "  mdify report.pdf --model qwen3.5:9b --dpi 300\n",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(
         "input",
         type=Path,
-        help="Input PDF file or directory containing PDFs.",
+        help="Input file or directory containing supported files.",
     )
     parser.add_argument(
         "-o",
@@ -103,22 +111,32 @@ def _get_version() -> str:
     return __version__
 
 
-def collect_pdfs(input_path: Path) -> list[Path]:
-    """Collect PDF files from the given path (file or directory)."""
+def collect_files(input_path: Path) -> list[Path]:
+    """Collect supported files from the given path (file or directory)."""
     if input_path.is_file():
-        if input_path.suffix.lower() != ".pdf":
-            console.print(f"[red]Not a PDF file: {input_path}[/red]")
+        if input_path.suffix.lower() not in SUPPORTED_EXTENSIONS:
+            console.print(
+                f"[red]Unsupported file type: {input_path.suffix}[/red]\n"
+                f"Supported: {', '.join(sorted(SUPPORTED_EXTENSIONS))}"
+            )
             sys.exit(1)
         return [input_path]
     elif input_path.is_dir():
-        pdfs = sorted(input_path.glob("**/*.pdf"))
-        if not pdfs:
-            console.print(f"[yellow]No PDF files found in {input_path}[/yellow]")
+        files = sorted(
+            f for f in input_path.rglob("*")
+            if f.is_file() and f.suffix.lower() in SUPPORTED_EXTENSIONS
+        )
+        if not files:
+            console.print(f"[yellow]No supported files found in {input_path}[/yellow]")
             sys.exit(0)
-        return pdfs
+        return files
     else:
         console.print(f"[red]Path does not exist: {input_path}[/red]")
         sys.exit(1)
+
+
+# Backward-compatible alias
+collect_pdfs = collect_files
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -137,11 +155,11 @@ def main(argv: list[str] | None = None) -> int:
     else:
         console.print("[dim]Skipping Ollama check (--skip-ollama-check)[/dim]")
 
-    # ── Collect PDFs ────────────────────────────────────────────────────
-    pdfs = collect_pdfs(input_path)
-    total = len(pdfs)
+    # ── Collect files ────────────────────────────────────────────────────
+    files = collect_files(input_path)
+    total = len(files)
 
-    console.print(f"\n[bold]mdify[/bold] — converting {total} PDF{'s' if total != 1 else ''}")
+    console.print(f"\n[bold]mdify[/bold] — converting {total} file{'s' if total != 1 else ''}")
     console.print(f"  Model   : [cyan]{args.model}[/cyan]")
     console.print(f"  DPI     : {args.dpi}")
     console.print(f"  Workers : {args.workers}")
@@ -152,40 +170,43 @@ def main(argv: list[str] | None = None) -> int:
     failed = 0
     t0 = time.time()
 
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-        BarColumn(),
-        MofNCompleteColumn(),
-        TimeElapsedColumn(),
-        TimeRemainingColumn(),
-        console=console,
-    ) as progress:
-        task = progress.add_task("Converting", total=total)
+    pbar = PgMinBar(
+        total=total,
+        unit="file",
+        bar_format=(
+            "{l_bar}{bar}| {n_fmt}/{total_fmt} files "
+            "[{elapsed}<{remaining}, {rate_fmt}]"
+        ),
+        smoothing=0.15,
+        mininterval=2,
+        dynamic_ncols=True,
+    )
 
-        with ThreadPoolExecutor(max_workers=args.workers) as pool:
-            futures = {
-                pool.submit(
-                    convert_pdf,
-                    pdf,
-                    output_dir,
-                    ollama_url=args.ollama_url,
-                    model=args.model,
-                    dpi=args.dpi,
-                    overwrite=args.overwrite,
-                ): pdf
-                for pdf in pdfs
-            }
+    with ThreadPoolExecutor(max_workers=args.workers) as pool:
+        futures = {
+            pool.submit(
+                convert_file,
+                f,
+                output_dir,
+                ollama_url=args.ollama_url,
+                model=args.model,
+                dpi=args.dpi,
+                overwrite=args.overwrite,
+            ): f
+            for f in files
+        }
 
-            for fut in as_completed(futures):
-                out_path, ok, msg = fut.result()
-                done += 1
-                if not ok:
-                    failed += 1
-                    progress.console.print(f"  [red]FAIL[/red] {out_path.name}: {msg}")
-                else:
-                    progress.console.print(f"  [green]OK[/green]   {out_path.name}: {msg}")
-                progress.advance(task)
+        for fut in as_completed(futures):
+            out_path, ok, msg = fut.result()
+            done += 1
+            if not ok:
+                failed += 1
+                tqdm.write(f"  FAIL {out_path.name}: {msg}")
+            else:
+                tqdm.write(f"  OK   {out_path.name}: {msg}")
+            pbar.update(1)
+
+    pbar.close()
 
     elapsed = time.time() - t0
     console.print(

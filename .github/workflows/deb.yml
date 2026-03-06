@@ -1,0 +1,63 @@
+name: Build Debian package
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+jobs:
+  deb:
+    name: Build .deb (Ubuntu ${{ matrix.ubuntu }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        ubuntu: [jammy, noble]   # 22.04 LTS, 24.04 LTS
+
+    container:
+      image: ubuntu:${{ matrix.ubuntu }}
+
+    steps:
+      - name: Install packaging tools
+        run: |
+          apt-get update -qq
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            debhelper dh-python python3-all python3-setuptools \
+            python3-hatchling devscripts lintian
+
+      - uses: actions/checkout@v4
+
+      - name: Build source + binary package
+        run: |
+          dpkg-buildpackage -us -uc -b
+          # Move resulting .deb one level up into a known path
+          mkdir -p /artifacts
+          mv ../python3-mdify_*.deb /artifacts/
+
+      - name: Lint package
+        run: lintian /artifacts/python3-mdify_*.deb || true
+
+      - name: Upload .deb artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: python3-mdify-${{ matrix.ubuntu }}
+          path: /artifacts/*.deb
+
+  # ── Optional: upload to a Launchpad PPA ──────────────────────────────
+  # Uncomment and configure after creating your PPA at launchpad.net.
+  #
+  # ppa:
+  #   name: Upload to Launchpad PPA
+  #   needs: deb
+  #   runs-on: ubuntu-latest
+  #   environment: ppa
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #     - name: Import GPG key
+  #       run: echo "${{ secrets.GPG_PRIVATE_KEY }}" | gpg --import
+  #     - name: Install dput
+  #       run: sudo apt-get install -y dput
+  #     - name: Upload to PPA
+  #       run: |
+  #         debuild -S -sa
+  #         dput ppa:jupinsker/mdify ../python3-mdify_*.changes

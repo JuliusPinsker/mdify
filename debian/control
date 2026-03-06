@@ -1,0 +1,39 @@
+Source: python3-mdify
+Section: python
+Priority: optional
+Maintainer: Julius Pinsker <julius@pinsker.ai>
+Build-Depends:
+ debhelper-compat (= 13),
+ dh-python,
+ python3-all,
+ python3-setuptools,
+ python3-hatchling,
+ python3-pymupdf (>= 1.24.0) | python3-fitz,
+ python3-pil (>= 10.0.0),
+ python3-requests (>= 2.31.0),
+ python3-rich (>= 13.0.0),
+Standards-Version: 4.7.0
+Homepage: https://github.com/jupinsker/mdify
+Rules-Requires-Root: no
+
+Package: python3-mdify
+Architecture: all
+Depends:
+ ${misc:Depends},
+ ${python3:Depends},
+ python3-pymupdf (>= 1.24.0) | python3-fitz,
+ python3-pil (>= 10.0.0),
+ python3-requests (>= 2.31.0),
+ python3-rich (>= 13.0.0),
+Description: PDF to Markdown converter powered by local Ollama vision models
+ mdify converts PDF documents into clean Markdown using a local
+ Ollama vision-language model (Qwen2.5-VL). Every page is rendered
+ as an image and fed to the VLM for precise OCR — tables, diagrams,
+ pinouts, and technical drawings are all captured as structured Markdown.
+ .
+ Features:
+  - Fully local: no cloud APIs, no data leaves your machine
+  - Automatic Ollama setup and model management
+  - High-fidelity OCR for tables and technical drawings
+  - Batch processing with parallel workers
+  - Programmatic Python API

@@ -27,6 +27,7 @@ Thumbs.db
 .pytest_cache/
 .coverage
 htmlcov/
+.venv/
 
 # Distribution
 *.tar.gz

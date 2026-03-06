@@ -1,0 +1,5 @@
+python3-mdify (0.1.0-1) unstable; urgency=low
+
+  * Initial Debian packaging.
+
+ -- Julius Pinsker <juliua@pinsker.ai>  Wed, 05 Mar 2026 00:00:00 +0000
